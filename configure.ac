@@ -8,7 +8,6 @@ if test $ISRELEASED = "no"; then
 	RELDATELONG=""
 	RELDATESHORT=""
 	RELDATENUM=""
-
 fi
 
 # Silence warning: ar: 'u' modifier ignored since 'D' is the default
@@ -57,7 +56,6 @@ AC_CHECK_HEADERS([fcntl.h \
 		  libintl.h \
 		  limits.h \
 		  locale.h \
-		  malloc.h \
 		  stddef.h \
 		  stdint.h \
 		  stdlib.h \
@@ -83,8 +81,8 @@ AC_TYPE_UINT8_T
 
 # Checks for library functions.
 AC_FUNC_FORK
-AC_FUNC_MALLOC
-AC_FUNC_REALLOC
+#AC_FUNC_MALLOC
+#AC_FUNC_REALLOC
 AC_FUNC_SETPGRP
 AC_FUNC_STRFTIME
 AC_FUNC_WAIT3
@@ -262,6 +260,9 @@ AC_ARG_WITH(imagepath,
 AH_TEMPLATE([FVWM_IMAGEPATH],[Where to search for images.])
 AC_DEFINE_UNQUOTED(FVWM_IMAGEPATH, "$val")
 
+AC_DEFINE([fd_set_size_t], [], ["Select"])
+AC_DEFINE_UNQUOTED(fd_set_size_t, int)
+
 FVWM_IMAGEPATH="$val"
 AC_SUBST(FVWM_IMAGEPATH)
 AC_MSG_RESULT($val)
@@ -293,12 +294,7 @@ freebsd*)
 	;;
 esac
 
-# *** pkg-config
-# unfortunately, we need pkg-config for the detection of certain libs:
-# - version of fontconfig without fontconfig-config
-# - version of fribidi without fribidi-config
-AM_CHECK_PKG_CONFIG
-
+PKG_PROG_PKG_CONFIG
 PKG_CHECK_MODULES([xt],[xt],
 [],
 [
@@ -531,6 +527,7 @@ fi
 AC_SUBST(Xcursor_CFLAGS)
 AC_SUBST(Xcursor_LIBS)
 
+# FIXME: XXX
 # ********* xft
 problem_xft=""
 
@@ -549,7 +546,6 @@ AC_ARG_ENABLE(xft,
 
 freetype_CFLAGS=""
 freetype_LIBS=""
-AH_TEMPLATE([HAVE_XFT],[Define if Xft library is used.])
 AH_TEMPLATE([HAVE_XFT2],[Define if Xft 2 library is used.])
 AH_TEMPLATE([HAVE_XFT_UTF8],[Define if Xft library can handle utf8 encoding])
 if test ! x"$with_xft" = xno; then
@@ -570,27 +566,10 @@ if test ! x"$with_xft" = xno; then
   AC_SUBST(freetype_CFLAGS)
   AC_SUBST(freetype_LIBS)
 
-  # check for fontconfig for Xft 2
-  have_fontconfig=no
-  if test ! x"$have_freetype" = xno ; then
-    AM_CHECK_FC(1.0.1)
-    if test x"$no_fc" = x ; then
-      have_fontconfig=yes
-      fontconfig_CFLAGS=`$PKG_CONFIG --cflags fontconfig`
-      fontconfig_LIBS=`$PKG_CONFIG --libs fontconfig`
-      CFLAGS="$CFLAGS $fontconfig_CFLAGS"
-      LIBS="$LIBS $fontconfig_LIBS"
-    else
-      have_fontconfig=no
-      problem_xft=": Can't detect fontconfig >= 1.0.1"
-    fi
-  fi
-
   # now check for Xft 2
   with_xft=no
   if test ! x"$have_fontconfig" = xno ; then
     # Xft 2
-    AM_CHECK_XFT(2.0.0)
     if test x"$no_xft" = x; then
       with_xft=yes
       problem_xft=" (version 2)"
@@ -603,35 +582,6 @@ if test ! x"$with_xft" = xno; then
       problem_xft=": Can't detect Xft2, detected fontconfig"
     fi
   fi
-
-  # if Xft2 not detected check for Xft1
-  if test ! x"$have_freetype" = xno && test ! x"$with_xft" = xyes; then
-    #Xft 1
-    AC_CHECK_LIB(Xft, XftFontOpen,
-      with_xft=yes, with_xft=no,
-      [$X_LIBS $X_PRE_LIBS -lXext -lX11 $X_EXTRA_LIBS $FT2_LIBS $Xrender_LIBS])
-    if test x"$with_xft" = xyes ; then
-      AC_CHECK_LIB(Xft, XftConfigSubstitute, is_xft1=yes, is_xft1=no,
-        [$X_LIBS $X_PRE_LIBS -lXext -lX11 $X_EXTRA_LIBS $FT2_LIBS $Xrender_LIBS])
-      if test x"$is_xft1" = xyes; then
-        Xft_LIBS="-lXft $FT2_LIBS"
-	Xft_CFLAGS="$Xft_CFLAGS $FT2_CFLAGS"
-        problem_xft=" (version 1)"
-        AC_DEFINE(HAVE_XFT)
-      else
-        with_xft=no
-        problem_xft=": Can't detect Xft 1 or fontconfig"
-      fi
-    else
-      problem_xft=": Can't detect Xft 1 or 2 and fontconfig"
-    fi
-    if test x"$with_xft" = xyes; then
-      AC_CHECK_LIB(Xft, XftDrawStringUtf8,
-        AC_DEFINE(HAVE_XFT_UTF8),,
-        [$X_LIBS $X_PRE_LIBS -lXext -lX11 $X_EXTRA_LIBS $FT2_LIBS $Xrender_LIBS])
-    fi
-  fi
-
 fi
 AC_SUBST(Xft_LIBS)
 AC_SUBST(Xft_CFLAGS)
@@ -944,6 +894,31 @@ if test ! x"$ac_cv_iconv" = xno; then
     AC_MSG_WARN([*** ])
   fi
 
+  #
+  # check if iconv second argument use const char.
+  #
+  AC_DEFUN([ICONV_SECOND_ARG],[
+        AC_MSG_CHECKING(check if second arg of iconv is const)
+        AC_TRY_COMPILE([
+  #include <stdlib.h>
+  #include <iconv.h>
+  extern
+  #if defined(__STDC__)
+    size_t iconv (iconv_t cd, char * *inbuf, size_t *inbytesleft, char * *outbuf, size_t *outbytesleft);
+  #else
+    size_t iconv();
+  #endif
+  ], [], use_const=no, use_const=yes)
+        AC_MSG_RESULT($use_const)
+        AH_TEMPLATE([ICONV_ARG_CONST],
+                    [define if second arg of iconv use const])
+        if test "x$use_const" = "xyes"; then
+                AC_DEFINE(ICONV_ARG_CONST, const)
+        else
+                AC_DEFINE(ICONV_ARG_CONST, )
+        fi
+])
+
   if test x"$with_iconv" = xyes; then
      AC_DEFINE(HAVE_ICONV)
      ICONV_SECOND_ARG
@@ -1111,7 +1086,6 @@ AH_TEMPLATE([HAVE_NLS],
   [Define to 1 if translation of program messages to the user's native
   language is requested.])
 if test ! x"$with_gettext" = xno; then
-  AM_GNU_FGETTEXT
   if test x"$USE_NLS" = "xyes"; then
     AC_DEFINE(HAVE_NLS, 1)
   else
@@ -1143,10 +1117,6 @@ AC_SUBST(GMOFILES)
 AC_SUBST(UPDATEPOFILES)
 AC_SUBST(DUMMYPOFILES)
 AC_SUBST(CATOBJEXT)
-
-# check for mkstemp, see the discution on this subject on the fvwm workers
-# list (2001-02-16 and 2001-02-24)
-AM_SAFETY_CHECK_MKSTEMP
 
 # Allow building with dmalloc.  Do this last to avoid screwing up any
 # other checks above.
@@ -1196,25 +1166,11 @@ AH_VERBATIM([_ZEND_EXPLICIT_DEFINITIONS],
 #define FMiniIconsSupported 0
 #endif
 
-#if RETSIGTYPE != void
-#define SIGNAL_RETURN return 0
-#else
-#define SIGNAL_RETURN return
+#ifndef RETSIGTYPE
+#define RETSIGTYPE     void
 #endif
 
-/* Allow GCC extensions to work, if you have GCC. */
-#ifndef __attribute__
-/* This feature is available in gcc versions 2.5 and later. */
-#  if __GNUC__ < 2 || (__GNUC__ == 2 && __GNUC_MINOR__ < 5) || __STRICT_ANSI__
-#    define __attribute__(x)
-#  endif
-/* The __-protected variants of `format' and `printf' attributes
- * are accepted by gcc versions 2.6.4 (effectively 2.7) and later. */
-#  if __GNUC__ < 2 || (__GNUC__ == 2 && __GNUC_MINOR__ < 7)
-#    define __format__ format
-#    define __printf__ printf
-#  endif
-#endif
+#define SIGNAL_RETURN return
 
 #ifdef HAVE_STRING_H
 #  include <string.h>
@@ -1330,9 +1286,6 @@ dnl with autoconf <2.60 this is needed
 AC_SUBST(datarootdir)
 AC_SUBST(docdir)
 
-LOCAL_BUGADDR=${FVWM_BUGADDR-${USER-${LOGNAME-`whoami`}}}
-AC_SUBST(LOCAL_BUGADDR)
-
 AC_CONFIG_FILES([Makefile
 	bin/FvwmCommand
 	bin/FvwmPrompt/Makefile
@@ -1377,27 +1330,6 @@ AC_CONFIG_FILES([Makefile
 	utils/Makefile
 ])
 AC_OUTPUT
-
-# ---------------------------------------------------------------------------
-# Original config.status is patched to make generated scripts executable.
-sed 's/> $ac_file/> $ac_file; test x"`head -1 $ac_file | cut -c1-2`" = x"#!" \&\& chmod a+rx $ac_file/' <config.status >config.status-t && \
-mv config.status-t config.status
-chmod +x config.status
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-cat >config.status-t <<EOF
-#! /bin/sh
-
-# Original config.status is patched to satisfy processing *.in with 'make -j'.
-# This bug seems to be partially fixed in autoconf-2.50 (not in all places).
-UNIQUE_POSTFIX=\$\$
-
-EOF
-sed 's/conftest/conftest\${UNIQUE_POSTFIX}/g' <config.status >>config.status-t && \
-mv config.status-t config.status
-chmod +x config.status
-# ---------------------------------------------------------------------------
 
 eval my_bindir="`eval echo ${bindir}`"
 eval my_mandir="`eval echo ${mandir}`"
