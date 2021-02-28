@@ -25,6 +25,7 @@
 #include "libs/Grab.h"
 #include "libs/Parse.h"
 #include "libs/FEvent.h"
+#include "libs/FScreen.h"
 #include "fvwm.h"
 #include "externs.h"
 #include "execcontext.h"
@@ -1600,10 +1601,29 @@ void goto_desk(int desk, struct monitor *m)
 
 		monitor_assign_virtual(m);
 
+		if (is_tracking_shared) {
+			char	*cmd;
+
+			TAILQ_FOREACH(m2, &monitor_q, entry) {
+				if (m != m2 &&
+				    m2->virtual_scr.CurrentDesk == desk) {
+					fprintf(stderr, "Would swap!\n");
+
+					xasprintf(&cmd,
+					    "All (Desk %d, Screen %s) MoveToScreen %s",
+					    desk, m2->si->name, m->si->name);
+					fprintf(stderr, "CMD: %s\n", cmd);
+					execute_function_override_window(NULL,
+					    NULL, cmd, 0, NULL);
+					free(cmd);
+				}
+			}
+		}
+
+done:
 		UnmapDesk(m, m->virtual_scr.CurrentDesk, True);
 		m->virtual_scr.CurrentDesk = desk;
 		MapDesk(m, desk, True);
-
 		monitor_assign_virtual(m);
 
 		focus_grab_buttons_all();
@@ -2215,7 +2235,7 @@ void CMD_DesktopConfiguration(F_CMD_ARGS)
 		 * mode, the desks won't be the same.  Fix this by switching
 		 * other monitor desks to be the same as the current monitor.
 		 */
-
+		is_tracking_shared = false;
 		char *cmd = NULL;
 		TAILQ_FOREACH(m_loop, &monitor_q, entry) {
 			if (m_loop == m)
@@ -2230,13 +2250,98 @@ void CMD_DesktopConfiguration(F_CMD_ARGS)
 			free(cmd);
 		}
 		monitor_mode = MONITOR_TRACKING_G;
-	} else if (strcasecmp(action, "per-monitor") == 0)
+		goto update;
+	}
+	if (strcasecmp(action, "per-monitor") == 0) {
 		monitor_mode = MONITOR_TRACKING_M;
-	else {
-		fvwm_debug(__func__, "action not recognised");
-		return;
+		is_tracking_shared = false;
+		goto update;
 	}
 
+	if (strcasecmp(action, "shared") == 0) {
+		//monitor_mode = MONITOR_TRACKING_M;
+		is_tracking_shared = true;
+
+		fprintf(stderr, "Setting shared...\n");
+
+		/* DesktopName command will update these accordingly.  But for
+		 * now, ensure all monitors point to this.
+		 */
+		char *cmd = NULL;
+		int nod = number_of_desktops(m);
+		int d = m->virtual_scr.CurrentDesk;
+
+		/* Steps:
+		 *
+		 * 1.	Initialise the shared_desktops structure.
+		 * 2.	Move all windows on all desks to new structure
+		 *	(memmove?)
+		 * 2.	Scan the screens for the current *active* desktop.
+		 *
+		 * 2a.	If global mode is being used, all monitors connected
+		 *	to it are looking at the same desktop.  In which case,
+		 *	take the *first* monitor, and move all the windows to
+		 *	that, and shuffle the active desktops by one on each
+		 *	other monitor.  So for example, if there were three
+		 *	monitors, all pointer to desktop 1 like this:
+		 *
+		 *	M1 => 1, M2 => 1, M3 => 1
+		 *
+		 *	then afterwards:
+		 *
+		 *	M1 => 1, M2 => 2, M3 => 3
+		 *
+		 * 2b.	If per-monitor mode is being used, then for each
+		 *	active desktop point that to the shared_desktops.  If
+		 *	both monitors are pointing to the same desktop as each
+		 *	other, move one of them back across all monitors
+		 *	(making them unique).
+		 */
+
+		if (monitor_mode == MONITOR_TRACKING_G) {
+			struct monitor *m_first = TAILQ_FIRST(&monitor_q);
+			struct monitor *m_this = monitor_get_current();
+			int current_desk = m_this->virtual_scr.CurrentDesk;
+		}
+
+		TAILQ_FOREACH(m_loop, &monitor_q, entry) {
+			m_loop->Desktops = shared_desktops;
+			if (m == m_loop)
+				continue;
+			for (int i = 0; i < nod; i++) {
+				xasprintf(&cmd, "GotoDesk %s 0 %d", m->si->name, i);
+				fprintf(stderr, "RUNNING 1: <<%s>>\n", cmd);
+				execute_function_override_window(NULL, NULL, cmd, 0, NULL);
+				free(cmd);
+
+				xasprintf(&cmd, "All (Screen %s, Desk %d) MoveToDesk",
+				    m_loop->si->name, i);
+				fprintf(stderr, "RUNNING 2: <<%s>>\n", cmd);
+				execute_function_override_window(NULL, NULL, cmd, 0, NULL);
+				free(cmd);
+			}
+		}
+
+		xasprintf(&cmd, "GotoDesk %s 0 %d", m->si->name, d);
+		execute_function_override_window(NULL, NULL, cmd, 0, NULL);
+		free(cmd);
+
+
+		TAILQ_FOREACH(m_loop, &monitor_q, entry) {
+			if (m != m_loop) {
+				d++;
+				xasprintf(&cmd, "GotoDesk %s 0 %d", m_loop->si->name, d);
+				fprintf(stderr, "RUNNING 3: <<%s>>\n", cmd);
+				execute_function_override_window(NULL, NULL, cmd, 0, NULL);
+				free(cmd);
+			}
+		}
+		goto update;
+	}
+	fvwm_debug(__func__, "action not recognised");
+	return;
+
+update:
 	initPanFrames();
 	raisePanFrames();
 
@@ -2833,6 +2938,11 @@ void CMD_DesktopName(F_CMD_ARGS)
 		TAILQ_INIT(&desktop_cmd_q);
 
 	store_desktop_cmd(desk, action);
+
+	if (monitor_mode == MONITOR_TRACKING_S) {
+		apply_desktops_monitor(TAILQ_FIRST(&monitor_q));
+		return;
+	}
 
 	TAILQ_FOREACH(m, &monitor_q, entry)
 		apply_desktops_monitor(m);

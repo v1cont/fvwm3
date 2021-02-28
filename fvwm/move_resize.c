@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <math.h>
+#include <stdbool.h>
 
 #include "libs/fvwmlib.h"
 #include "libs/Picture.h"
@@ -1805,11 +1806,20 @@ static void __move_window(F_CMD_ARGS, Bool do_animate, int mode)
 		rectangle s;
 		rectangle p;
 		struct monitor	*m;
+		char		*token;
+		bool		 preserve = false;
 
 		if (action == NULL)
 			m = monitor_get_current();
-		else
-			m = monitor_resolve_name(action);
+		else {
+			token = PeekToken(action, &action);
+			m = monitor_resolve_name(token);
+		}
+
+		if ((token = PeekToken(action, &action)) != NULL &&
+		    StrEquals(token, "preserve")) {
+			preserve = true;
+		}
 
 		s.x = m->si->x;
 		s.y = m->si->y;
@@ -1817,14 +1827,14 @@ static void __move_window(F_CMD_ARGS, Bool do_animate, int mode)
 		s.height = m->si->h;
 
 		do_animate = False;
-		page_x = m->virtual_scr.Vx;
-		page_y = m->virtual_scr.Vy;
+		page_x = preserve ? fw->m->virtual_scr.Vx : m->virtual_scr.Vx;
+		page_y = preserve ? fw->m->virtual_scr.Vy : m->virtual_scr.Vy;
 		r.x = x;
 		r.y = y;
 		r.width = width;
 		r.height = height;
-		p.x = page_x - m->virtual_scr.Vx;
-		p.y = page_y - m->virtual_scr.Vy;
+		p.x = page_x - preserve ? fw->m->virtual_scr.Vx : m->virtual_scr.Vx;
+		p.y = page_y - preserve ? fw->m->virtual_scr.Vy : m->virtual_scr.Vy;
 		p.width = m->virtual_scr.MyDisplayWidth;
 		p.height = m->virtual_scr.MyDisplayHeight;
 		/* move to page first */
